@@ -144,16 +144,17 @@ export default function ClientLayout({ children }) {
   useEffect(() => {
     if (!showKiblatModal) return;
 
+    setCompassError('');
     const currentKota = DAFTAR_KOTA.find(k => k.id === selectedKotaId) || DAFTAR_KOTA[0];
     const targetQibla = calculateQiblaDirection(currentKota.lat, currentKota.lng);
     setQiblaBearing(targetQibla);
 
     const handleOrientation = (e) => {
       let compassHeading = null;
-      if (e.webkitCompassHeading) {
+      if (e.webkitCompassHeading !== undefined && e.webkitCompassHeading !== null) {
         compassHeading = e.webkitCompassHeading;
       } else if (e.alpha !== null) {
-        compassHeading = 360 - e.alpha;
+        compassHeading = (360 - e.alpha) % 360;
       }
 
       if (compassHeading !== null) {
@@ -204,17 +205,13 @@ export default function ClientLayout({ children }) {
   const initRealtimeTransactionListener = () => {
     if (!supabase) return;
 
-    const donationChannel = supabase
-      .channel('realtime_donations')
+    const channel = supabase
+      .channel('realtime_transactions')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'donation_details' }, (payload) => {
         const data = payload.new;
         const nominal = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(data.amount || 0);
         triggerNotification('💰 Donasi Masuk Baru', `Terima kasih! Donasi ${nominal} dari ${data.donor_name || 'Hamba Allah'} telah diterima.`);
       })
-      .subscribe();
-
-    const expenseChannel = supabase
-      .channel('realtime_expenses')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions' }, (payload) => {
         const data = payload.new;
         const nominal = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(data.amount || 0);
@@ -223,8 +220,7 @@ export default function ClientLayout({ children }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(donationChannel);
-      supabase.removeChannel(expenseChannel);
+      supabase.removeChannel(channel);
     };
   };
 
@@ -796,7 +792,6 @@ export default function ClientLayout({ children }) {
           <div className="w-full max-w-md md:max-w-xl mx-auto h-16 flex items-center justify-around px-3">
             <Link 
               href="/" 
-              replace
               className={`relative flex flex-col items-center justify-center w-12 h-12 rounded-2xl transition-all duration-300 ${
                 pathname === '/' 
                   ? 'theme-text-accent font-black bg-black/10 dark:bg-white/10 scale-105 border border-slate-300 dark:border-white/20 shadow-md' 
@@ -809,7 +804,6 @@ export default function ClientLayout({ children }) {
 
             <Link 
               href="/stat" 
-              replace
               className={`relative flex flex-col items-center justify-center w-12 h-12 rounded-2xl transition-all duration-300 ${
                 pathname === '/stat' 
                   ? 'theme-text-accent font-black bg-black/10 dark:bg-white/10 scale-105 border border-slate-300 dark:border-white/20 shadow-md' 
@@ -834,7 +828,6 @@ export default function ClientLayout({ children }) {
 
             <Link 
               href="/anggaran" 
-              replace
               className={`relative flex flex-col items-center justify-center w-12 h-12 rounded-2xl transition-all duration-300 ${
                 pathname === '/anggaran' 
                   ? 'theme-text-accent font-black bg-black/10 dark:bg-white/10 scale-105 border border-slate-300 dark:border-white/20 shadow-md' 
@@ -1178,7 +1171,6 @@ export default function ClientLayout({ children }) {
                       <Link 
                         key={dm.href} 
                         href={dm.href} 
-                        replace
                         onClick={(e) => {
                           e.stopPropagation();
                           setShowMainMenuDrawer(false);
