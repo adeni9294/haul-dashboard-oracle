@@ -124,26 +124,17 @@ export default function DashboardPage() {
   const visitorLogRecordedRef = useRef(false);
   const dict = DICTIONARY[lang] || DICTIONARY['id'];
 
-  useEffect(() => {
-    if (!visitorLogRecordedRef.current) {
-      visitorLogRecordedRef.current = true;
-      recordVisitorLog();
-    }
-  }, []);
-
-  useEffect(() => {
-    loadDashboardData();
-  }, [selectedPeriodeId]);
-
-  async function recordVisitorLog() {
+  const recordVisitorLog = useCallback(async () => {
     try {
       let ipAddress = '127.0.0.1';
       try {
         const res = await fetch('https://api.ipify.org?format=json');
-        const ipData = await res.json();
-        ipAddress = ipData.ip;
+        if (res.ok) {
+          const ipData = await res.json();
+          ipAddress = ipData.ip || '127.0.0.1';
+        }
       } catch (e) {
-        console.log('IP fetch failed, using default');
+        console.warn('IP fetch fallback applied');
       }
 
       await fetch('/api/dashboard', {
@@ -158,9 +149,9 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Visitor log error:', err);
     }
-  }
+  }, []);
 
-  async function loadDashboardData() {
+  const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -170,9 +161,9 @@ export default function DashboardPage() {
         : '/api/dashboard';
 
       const res = await fetch(url);
+      if (!res.ok) throw new Error('API Response Error');
+      
       const data = await res.json();
-
-      if (!res.ok) throw new Error(data.error || 'Failed to fetch dashboard data');
 
       const {
         periodeList: listPeriode = [],
@@ -186,7 +177,7 @@ export default function DashboardPage() {
       let activePeriodeId = selectedPeriodeId;
       let currentSaldoAwal = 0;
 
-      if (listPeriode && listPeriode.length > 0) {
+      if (Array.isArray(listPeriode) && listPeriode.length > 0) {
         setPeriodeList(listPeriode);
         if (!activePeriodeId) {
           activePeriodeId = listPeriode[0].id || listPeriode[0].ID;
@@ -213,7 +204,7 @@ export default function DashboardPage() {
       const listPemasukanGrup = {};
       const listPengeluaranGrup = [];
 
-      if (donationsDb && Array.isArray(donationsDb)) {
+      if (Array.isArray(donationsDb)) {
         donationsDb.forEach((item) => {
           const rawAmount = parseFloat(item.amount || item.AMOUNT) || 0;
           const catName = (item.category || item.CATEGORY || 'Lain-lain').toString().trim();
@@ -232,7 +223,7 @@ export default function DashboardPage() {
 
             const keyFee = `${tgl}_FEE_SYSTEM_${item.id || item.ID}`;
             listPemasukanGrup[keyFee] = {
-              note: `${dict.systemFee} ${tgl?.substring(0, 7)}`,
+              note: `${dict.systemFee} ${tgl.substring(0, 7)}`,
               transaction_date: tgl,
               amount: nominalMinus
             };
@@ -243,7 +234,7 @@ export default function DashboardPage() {
 
             const keySaldo = `${tgl}_SALDO_SYSTEM_${item.id || item.ID}`;
             listPemasukanGrup[keySaldo] = {
-              note: `${dict.settledBalance} ${tgl?.substring(0, 7)}`,
+              note: `${dict.settledBalance} ${tgl.substring(0, 7)}`,
               transaction_date: tgl,
               amount: nominalPositif
             };
@@ -270,7 +261,7 @@ export default function DashboardPage() {
         });
       }
 
-      if (transactionsDb && Array.isArray(transactionsDb)) {
+      if (Array.isArray(transactionsDb)) {
         transactionsDb.forEach((item) => {
           const nominal = Math.abs(parseFloat(item.amount || item.AMOUNT || item.nominal || item.NOMINAL) || 0);
           const rawType = (item.type || item.TYPE || item.jenis || item.JENIS || '').toString().toLowerCase().trim();
@@ -313,11 +304,11 @@ export default function DashboardPage() {
       }
 
       const arrayMasukFinal = Object.values(listPemasukanGrup)
-        .sort((a, b) => b.transaction_date.localeCompare(a.transaction_date))
+        .sort((a, b) => (b.transaction_date || '').localeCompare(a.transaction_date || ''))
         .slice(0, 15);
 
       const arrayKeluarFinal = listPengeluaranGrup
-        .sort((a, b) => b.transaction_date.localeCompare(a.transaction_date))
+        .sort((a, b) => (b.transaction_date || '').localeCompare(a.transaction_date || ''))
         .slice(0, 15);
 
       const parseChart = (map, total) =>
@@ -359,13 +350,24 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Dashboard load error:', err);
       setError(dict.errorLoadingData);
-    } finally {
+    } font-mono finally {
       setLoading(false);
     }
-  }
+  }, [selectedPeriodeId, dict.systemFee, dict.settledBalance, dict.combinedDonor, dict.donorUpper, dict.operasionalExpense, dict.errorLoadingData]);
+
+  useEffect(() => {
+    if (!visitorLogRecordedRef.current) {
+      visitorLogRecordedRef.current = true;
+      recordVisitorLog();
+    }
+  }, [recordVisitorLog]);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, [loadDashboardData]);
 
   const formatRupiah = useCallback((angka) => {
-    const absValue = Math.abs(angka);
+    const absValue = Math.abs(angka || 0);
     const formatted = new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
