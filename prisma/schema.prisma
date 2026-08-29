@@ -1,0 +1,4 @@
+datasource db {
+  provider          = "postgresql" // TIPU
+  url               = env("SHADOW_DATABASE_URL") // PAKE YG TIPUAN
+}

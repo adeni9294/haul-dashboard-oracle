@@ -1,0 +1,12 @@
+dbhaul_high = (description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=adb.ap-batam-1.oraclecloud.com))(connect_data=(service_name=gfc40edfb77a0d0_dbhaul_high.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))
+
+dbhaul_medium = (description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=adb.ap-batam-1.oraclecloud.com))(connect_data=(service_name=gfc40edfb77a0d0_dbhaul_medium.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))
+
+dbhaul_low = (description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=adb.ap-batam-1.oraclecloud.com))(connect_data=(service_name=gfc40edfb77a0d0_dbhaul_low.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))
+
+dbhaul_tp = (description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=adb.ap-batam-1.oraclecloud.com))(connect_data=(service_name=gfc40edfb77a0d0_dbhaul_tp.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))
+
+dbhaul_tpurgent = (description= (retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1522)(host=adb.ap-batam-1.oraclecloud.com))(connect_data=(service_name=gfc40edfb77a0d0_dbhaul_tpurgent.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))
+
+
+
