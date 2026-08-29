@@ -350,7 +350,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Dashboard load error:', err);
       setError(dict.errorLoadingData);
-    } font-mono finally {
+    } finally {
       setLoading(false);
     }
   }, [selectedPeriodeId, dict.systemFee, dict.settledBalance, dict.combinedDonor, dict.donorUpper, dict.operasionalExpense, dict.errorLoadingData]);
