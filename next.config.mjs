@@ -6,23 +6,17 @@ const __dirname = path.dirname(__filename);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  /* 🚀 Mode Static Export untuk Capacitor & Android Studio */
-  output: 'export',
+  /* ⚠️ Comment atau hapus baris output: 'export' agar API Route berfungsi di Vercel */
+  // output: 'export',
 
-  /* 🖼️ Nonaktifkan optimasi gambar bawaan server */
   images: {
     unoptimized: true,
   },
 
-  /* 🔗 Memastikan routing file statis Android berjalan lancar */
-  trailingSlash: true,
-
-  /* ✅ Mengabaikan error TypeScript saat build */
   typescript: {
     ignoreBuildErrors: true,
   },
 
-  /* 🛠️ Paksa Turbopack & Webpack mengenali alias `@/` ke folder `src` */
   turbopack: {
     resolveAlias: {
       '@': path.resolve(__dirname, 'src'),
