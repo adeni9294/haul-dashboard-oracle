@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import SplashScreen from './SplashScreen';
-import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import GlassCard from '../components/GlassCard';
@@ -36,10 +35,6 @@ import {
   Moon,
   Navigation
 } from 'lucide-react';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -95,7 +90,6 @@ export default function ClientLayout({ children }) {
 
   const [heading, setHeading] = useState(0);
   const [qiblaBearing, setQiblaBearing] = useState(295);
-  const [isCompassPermissionGranted, setIsCompassPermissionGranted] = useState(false);
   const [compassError, setCompassError] = useState('');
 
   const showToast = (type, title, message, action = null) => {
@@ -135,9 +129,10 @@ export default function ClientLayout({ children }) {
     requestCapacitorPermissions();
     subscribeUserToPush();
     
-    const cleanupRealtime = initRealtimeTransactionListener();
+    // Inisialisasi Realtime via Server-Sent Events (SSE) dari API Oracle Backend
+    const eventSource = initRealtimeOracleSSE();
     return () => {
-      if (cleanupRealtime) cleanupRealtime();
+      if (eventSource) eventSource.close();
     };
   }, []);
 
@@ -159,7 +154,6 @@ export default function ClientLayout({ children }) {
 
       if (compassHeading !== null) {
         setHeading(compassHeading);
-        setIsCompassPermissionGranted(true);
       }
     };
 
@@ -202,26 +196,30 @@ export default function ClientLayout({ children }) {
     }
   };
 
-  const initRealtimeTransactionListener = () => {
-    if (!supabase) return;
+  // Realtime notification menggunakan Server-Sent Events (SSE) untuk Oracle Backend
+  const initRealtimeOracleSSE = () => {
+    if (typeof window === 'undefined') return null;
 
-    const channel = supabase
-      .channel('realtime_transactions')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'donation_details' }, (payload) => {
-        const data = payload.new;
+    try {
+      const eventSource = new EventSource('/api/realtime/stream');
+
+      eventSource.addEventListener('donation_insert', (event) => {
+        const data = JSON.parse(event.data);
         const nominal = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(data.amount || 0);
         triggerNotification('💰 Donasi Masuk Baru', `Terima kasih! Donasi ${nominal} dari ${data.donor_name || 'Hamba Allah'} telah diterima.`);
-      })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions' }, (payload) => {
-        const data = payload.new;
+      });
+
+      eventSource.addEventListener('transaction_insert', (event) => {
+        const data = JSON.parse(event.data);
         const nominal = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(data.amount || 0);
         triggerNotification('💸 Pengeluaran Kas Baru', `Pencatatan pengeluaran: ${data.note || 'Pengeluaran'} sebesar ${nominal}.`);
-      })
-      .subscribe();
+      });
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+      return eventSource;
+    } catch (err) {
+      console.warn('Gagal menginisialisasi SSE Realtime:', err);
+      return null;
+    }
   };
 
   const subscribeUserToPush = async () => {
@@ -249,16 +247,13 @@ export default function ClientLayout({ children }) {
         });
       }
 
-      if (subscription && supabase) {
-        const subJson = subscription.toJSON();
-        await supabase.from('push_subscriptions').upsert(
-          {
-            endpoint: subJson.endpoint,
-            keys_p256dh: subJson.keys?.p256dh || '',
-            keys_auth: subJson.keys?.auth || ''
-          },
-          { onConflict: 'endpoint' }
-        );
+      if (subscription) {
+        // Kirim Push Subscription ke Backend Oracle
+        await fetch('/api/notifications/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(subscription)
+        });
       }
     } catch (err) {
       console.error('Gagal meregister Web Push:', err);
@@ -569,31 +564,37 @@ export default function ClientLayout({ children }) {
     }
   };
 
+  // Validasi sesi admin via Oracle Backend API
   async function checkAdminSession() {
     const savedPassword = localStorage.getItem('admin_password_haul');
-    if (!savedPassword || !supabase) return setIsAdmin(false);
+    if (!savedPassword) return setIsAdmin(false);
+
     try {
-      const { data: isValid } = await supabase.rpc('verify_admin_password', { p_password: savedPassword });
-      setIsAdmin(!!isValid);
+      const res = await fetch('/api/admin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: savedPassword })
+      });
+      const data = await res.json();
+      setIsAdmin(!!data.valid);
     } catch (err) {
       setIsAdmin(false);
     }
   }
 
+  // Load konfigurasi header dari Oracle Backend API
   async function loadHeaderSettings() {
-    if (!supabase) return;
     try {
-      const { data } = await supabase.from('settings').select('*').eq('id', 'main_config');
-
-      if (data && data.length > 0) {
-        const config = data[0];
+      const res = await fetch('/api/settings');
+      if (res.ok) {
+        const config = await res.json();
         if (config.org_name) setOrgName(config.org_name);
         if (config.address) setAddress(config.address);
         if (config.bank_info) setBankInfo(config.bank_info);
         if (config.logo_url) setLogoUrl(config.logo_url);
       }
     } catch (err) {
-      console.error(err);
+      console.error('Gagal memuat pengaturan header:', err);
     }
   }
 
@@ -634,13 +635,18 @@ export default function ClientLayout({ children }) {
     setTimeout(() => setCopiedIndex(null), 2000);
   };
 
+  // Login admin via Oracle Backend API
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (!supabase) return;
     try {
-      const { data: isValid, error } = await supabase.rpc('verify_admin_password', { p_password: passwordInput });
+      const res = await fetch('/api/admin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: passwordInput })
+      });
+      const data = await res.json();
 
-      if (!error && isValid) {
+      if (res.ok && data.valid) {
         localStorage.setItem('admin_password_haul', passwordInput);
         setIsAdmin(true);
         setShowLoginModal(false);
@@ -650,7 +656,7 @@ export default function ClientLayout({ children }) {
         showToast('error', 'Otorisasi Gagal', 'Kata sandi Admin yang Anda masukkan salah!');
       }
     } catch (err) {
-      showToast('error', 'Gangguan Koneksi', 'Gagal terhubung ke server autentikasi Supabase.');
+      showToast('error', 'Gangguan Koneksi', 'Gagal terhubung ke API backend Oracle.');
     }
   };
 
