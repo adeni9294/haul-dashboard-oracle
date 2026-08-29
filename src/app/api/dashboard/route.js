@@ -1,6 +1,6 @@
 // app/api/dashboard/route.js
 import { NextResponse } from 'next/server';
-import { executeQuery } from '@/lib/oracle'; // Pastikan file lib/oracle.js sudah dibuat
+import { executeQuery } from '../../../lib/oracle'; // Pastikan file lib/oracle.js sudah dibuat
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
