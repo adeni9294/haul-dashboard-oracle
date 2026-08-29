@@ -1,12 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import GlassCard from './components/GlassCard';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 const DICTIONARY = {
   id: {
@@ -130,7 +125,7 @@ export default function DashboardPage() {
   const dict = DICTIONARY[lang] || DICTIONARY['id'];
 
   useEffect(() => {
-    if (!visitorLogRecordedRef.current && supabase) {
+    if (!visitorLogRecordedRef.current) {
       visitorLogRecordedRef.current = true;
       recordVisitorLog();
     }
@@ -141,7 +136,6 @@ export default function DashboardPage() {
   }, [selectedPeriodeId]);
 
   async function recordVisitorLog() {
-    if (!supabase) return;
     try {
       let ipAddress = '127.0.0.1';
       try {
@@ -152,10 +146,14 @@ export default function DashboardPage() {
         console.log('IP fetch failed, using default');
       }
 
-      await supabase.from('visitor_logs').insert({
-        path: typeof window !== 'undefined' ? window.location.pathname || '/' : '/',
-        ip_address: ipAddress,
-        user_agent: typeof window !== 'undefined' ? window.navigator.userAgent || 'unknown' : 'unknown'
+      await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: typeof window !== 'undefined' ? window.location.pathname || '/' : '/',
+          ip_address: ipAddress,
+          user_agent: typeof window !== 'undefined' ? window.navigator.userAgent || 'unknown' : 'unknown'
+        })
       });
     } catch (err) {
       console.error('Visitor log error:', err);
@@ -163,86 +161,49 @@ export default function DashboardPage() {
   }
 
   async function loadDashboardData() {
-    if (!supabase) return;
-    
     try {
       setLoading(true);
       setError(null);
 
+      const url = selectedPeriodeId 
+        ? `/api/dashboard?periode_id=${selectedPeriodeId}`
+        : '/api/dashboard';
+
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch dashboard data');
+
+      const {
+        periodeList: listPeriode = [],
+        settingsData,
+        visitorStats: visStats,
+        totalPlafonDinamis = 0,
+        donationsDb = [],
+        transactionsDb = []
+      } = data;
+
       let activePeriodeId = selectedPeriodeId;
       let currentSaldoAwal = 0;
-
-      const { data: listPeriode, error: periodeError } = await supabase
-        .from('periode_haul')
-        .select('id, nama_periode, saldo_awal, is_closed, created_at')
-        .order('created_at', { ascending: false });
-
-      if (periodeError) throw periodeError;
 
       if (listPeriode && listPeriode.length > 0) {
         setPeriodeList(listPeriode);
         if (!activePeriodeId) {
-          activePeriodeId = listPeriode[0].id;
+          activePeriodeId = listPeriode[0].id || listPeriode[0].ID;
           setSelectedPeriodeId(activePeriodeId);
         }
 
-        const selectedObj = listPeriode.find(p => p.id === activePeriodeId) || listPeriode[0];
-        currentSaldoAwal = parseFloat(selectedObj.saldo_awal || 0);
+        const selectedObj = listPeriode.find(p => (p.id || p.ID) === activePeriodeId) || listPeriode[0];
+        currentSaldoAwal = parseFloat(selectedObj.saldo_awal || selectedObj.SALDO_AWAL || 0);
       }
-
-      const { data: settingsData } = await supabase
-        .from('settings')
-        .select('announcement, banner_text')
-        .eq('id', 'main_config')
-        .single();
 
       if (settingsData) {
-        setAnnouncement(settingsData.announcement || settingsData.banner_text || '');
+        setAnnouncement(settingsData.announcement || settingsData.ANNOUNCEMENT || settingsData.banner_text || settingsData.BANNER_TEXT || '');
       }
 
-      let visitorData = { totalViews: 0, uniqueCount: 0 };
-      try {
-        const { count: countViews, error: countError } = await supabase
-          .from('visitor_logs')
-          .select('*', { count: 'exact', head: true });
-
-        if (!countError) {
-          const { data: listIps, error: ipsError } = await supabase
-            .from('visitor_logs')
-            .select('ip_address');
-
-          const uniqueIpsCount = !ipsError && listIps ? new Set(listIps.map(v => v.ip_address)).size : 0;
-          visitorData = { totalViews: countViews || 0, uniqueCount: uniqueIpsCount };
-        }
-      } catch (visErr) {
-        console.error('Visitor stats error:', visErr);
+      if (visStats) {
+        setVisitorStats(visStats);
       }
-      setVisitorStats(visitorData);
-
-      const { data: budgetsData } = await supabase
-        .from('budgets')
-        .select('planned_amount');
-
-      let totalPlafonDinamis = 0;
-      if (budgetsData) {
-        budgetsData.forEach(b => {
-          totalPlafonDinamis += parseFloat(b.planned_amount) || 0;
-        });
-      }
-
-      let donQuery = supabase.from('donation_details').select('*');
-      let txQuery = supabase.from('transactions').select('*');
-
-      if (activePeriodeId) {
-        donQuery = donQuery.eq('periode_id', activePeriodeId);
-        txQuery = txQuery.eq('periode_id', activePeriodeId);
-      }
-
-      const { data: donationsDb, error: donError } = await donQuery;
-      const { data: transactionsDb, error: txError } = await txQuery;
-
-      if (donError) console.error('Donation fetch error:', donError);
-      if (txError) console.error('Transaction fetch error:', txError);
 
       let calcMasuk = 0;
       let calcKeluar = 0;
@@ -254,13 +215,13 @@ export default function DashboardPage() {
 
       if (donationsDb && Array.isArray(donationsDb)) {
         donationsDb.forEach((item) => {
-          const rawAmount = parseFloat(item.amount) || 0;
-          const catName = (item.category || 'Lain-lain').toString().trim();
-          const tgl = item.transaction_date || '';
+          const rawAmount = parseFloat(item.amount || item.AMOUNT) || 0;
+          const catName = (item.category || item.CATEGORY || 'Lain-lain').toString().trim();
+          const tgl = item.transaction_date || item.TRANSACTION_DATE || '';
 
           if (!tgl) return;
 
-          const donorNameClean = (item.donor_name || '').toString().trim();
+          const donorNameClean = (item.donor_name || item.DONOR_NAME || '').toString().trim();
           const isAdminFee = donorNameClean === '__ADMIN_FEE__';
           const isSaldoMengendap = donorNameClean === '__SALDO_MENGENDAP__';
 
@@ -269,7 +230,7 @@ export default function DashboardPage() {
             calcMasuk += nominalMinus;
             incomeMap[catName] = (incomeMap[catName] || 0) + nominalMinus;
 
-            const keyFee = `${tgl}_FEE_SYSTEM_${item.id}`;
+            const keyFee = `${tgl}_FEE_SYSTEM_${item.id || item.ID}`;
             listPemasukanGrup[keyFee] = {
               note: `${dict.systemFee} ${tgl?.substring(0, 7)}`,
               transaction_date: tgl,
@@ -280,7 +241,7 @@ export default function DashboardPage() {
             calcMasuk += nominalPositif;
             incomeMap[catName] = (incomeMap[catName] || 0) + nominalPositif;
 
-            const keySaldo = `${tgl}_SALDO_SYSTEM_${item.id}`;
+            const keySaldo = `${tgl}_SALDO_SYSTEM_${item.id || item.ID}`;
             listPemasukanGrup[keySaldo] = {
               note: `${dict.settledBalance} ${tgl?.substring(0, 7)}`,
               transaction_date: tgl,
@@ -311,11 +272,11 @@ export default function DashboardPage() {
 
       if (transactionsDb && Array.isArray(transactionsDb)) {
         transactionsDb.forEach((item) => {
-          const nominal = Math.abs(parseFloat(item.amount || item.nominal) || 0);
-          const rawType = (item.type || item.jenis || '').toString().toLowerCase().trim();
-          const catName = (item.category || item.kategori || 'Lain-lain').toString().trim();
-          const tgl = item.transaction_date || '';
-          const noteText = (item.note || '').toString().toUpperCase();
+          const nominal = Math.abs(parseFloat(item.amount || item.AMOUNT || item.nominal || item.NOMINAL) || 0);
+          const rawType = (item.type || item.TYPE || item.jenis || item.JENIS || '').toString().toLowerCase().trim();
+          const catName = (item.category || item.CATEGORY || item.kategori || item.KATEGORI || 'Lain-lain').toString().trim();
+          const tgl = item.transaction_date || item.TRANSACTION_DATE || '';
+          const noteText = (item.note || item.NOTE || '').toString().toUpperCase();
 
           if (!tgl) return;
 
@@ -331,19 +292,19 @@ export default function DashboardPage() {
             calcKeluar += nominal;
             expenseMap[catName] = (expenseMap[catName] || 0) + nominal;
             listPengeluaranGrup.push({
-              note: item.note || dict.operasionalExpense,
+              note: item.note || item.NOTE || dict.operasionalExpense,
               transaction_date: tgl,
               amount: nominal
             });
           } else {
-            if (!item.note || item.note.trim() === '') return;
+            if (!item.note && !item.NOTE) return;
 
             calcMasuk += nominal;
             incomeMap[catName] = (incomeMap[catName] || 0) + nominal;
 
-            const keyManual = `MANUAL_${item.id}`;
+            const keyManual = `MANUAL_${item.id || item.ID}`;
             listPemasukanGrup[keyManual] = {
-              note: item.note,
+              note: item.note || item.NOTE,
               transaction_date: tgl,
               amount: nominal
             };
@@ -482,11 +443,16 @@ export default function DashboardPage() {
               onChange={(e) => setSelectedPeriodeId(Number(e.target.value))}
               className="theme-bg-tertiary theme-text-accent text-xs rounded-lg px-2.5 py-1 focus:outline-none font-mono font-bold cursor-pointer theme-border border"
             >
-              {periodeList.map((p) => (
-                <option key={p.id} value={p.id} className="bg-slate-900 text-white dark:bg-slate-900 dark:text-white">
-                  {p.nama_periode} {p.is_closed ? dict.statusClosed : dict.statusActive}
-                </option>
-              ))}
+              {periodeList.map((p) => {
+                const pId = p.id || p.ID;
+                const pNama = p.nama_periode || p.NAMA_PERIODE;
+                const pClosed = p.is_closed || p.IS_CLOSED;
+                return (
+                  <option key={pId} value={pId} className="bg-slate-900 text-white dark:bg-slate-900 dark:text-white">
+                    {pNama} {pClosed ? dict.statusClosed : dict.statusActive}
+                  </option>
+                );
+              })}
             </select>
           </GlassCard>
         )}
@@ -621,7 +587,7 @@ export default function DashboardPage() {
             </p>
           </div>
         </div>
-              
+            
       </div>
 
       {/* LOG TRAFIK PENGUNJUNG & TARGET PLAFON PROGRESS */}
@@ -670,112 +636,106 @@ export default function DashboardPage() {
             />
           </div>
           <div className="flex justify-between items-center text-[10px] font-mono theme-text-secondary">
-            <span>{dict.collected}: <strong className="theme-text-primary">{formatRupiah(progress.current)}</strong></span>
-            <span>{dict.target}: <strong className="theme-text-primary">{formatRupiah(progress.target)}</strong></span>
+            <span>{dict.collected}: {formatRupiah(progress.current)}</span>
+            <span>{dict.target}: {formatRupiah(progress.target)}</span>
           </div>
         </GlassCard>
 
       </div>
 
-      {/* REKAP KATEGORI */}
+      {/* REKAP & MUTASI TERAKHIR */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <GlassCard className="p-4 space-y-3">
-          <h4 className="text-[10px] font-black text-cyan-400 uppercase tracking-widest border-b theme-border pb-2 flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-            </svg>
-            {dict.rekapIncome}
-          </h4>
-          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-            {catSummaryMasuk.map((c, i) => (
-              <div key={i} className="p-2 theme-bg-tertiary theme-border border rounded-xl flex justify-between items-center text-xs">
-                <span className="flex items-center gap-1.5 theme-text-secondary font-medium">
-                  <svg className="w-3 h-3 text-cyan-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 7h10M7 12h10m-8 5h8"></path>
-                  </svg>
-                  {c.label}
-                </span>
-                <span className={`font-mono font-bold ${c.value < 0 ? 'text-rose-400' : 'theme-text-accent'}`}>{formatRupiah(c.value)}</span>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
 
+        {/* PEMASUKAN */}
         <GlassCard className="p-4 space-y-3">
-          <h4 className="text-[10px] font-black text-rose-400 uppercase tracking-widest border-b theme-border pb-2 flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 30a1 1 0 000 2h2a1 1 0 000-2h-2z M16 8v8m-4-5h8m-8 0a3 3 0 106 0 3 3 0 00-6 0z"></path>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h1m4 0h1m-5 4h12a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
-            </svg>
-            {dict.rekapExpense}
-          </h4>
-          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-            {catSummaryKeluar.map((c, i) => (
-              <div key={i} className="p-2 theme-bg-tertiary theme-border border rounded-xl flex justify-between items-center text-xs">
-                <span className="flex items-center gap-1.5 theme-text-secondary font-medium">
-                  <svg className="w-3 h-3 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 7h10M7 12h10m-8 5h8"></path>
-                  </svg>
-                  {c.label}
-                </span>
-                <span className="font-mono font-bold text-rose-400">{formatRupiah(c.value)}</span>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-      </div>
+          <h3 className="text-[11px] font-black uppercase tracking-wider text-emerald-500 font-mono flex items-center justify-between border-b theme-border pb-2">
+            <span>{dict.rekapIncome}</span>
+            <span className="text-[9px] theme-text-tertiary font-normal">({catSummaryMasuk.length})</span>
+          </h3>
 
-      {/* MUTASI TERAKHIR */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <GlassCard className="p-4 border-l-4 border-l-emerald-400 space-y-3">
-          <h5 className="text-[10px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path>
-            </svg>
+          <div className="space-y-2">
+            {catSummaryMasuk.length === 0 ? (
+              <p className="text-[10px] theme-text-tertiary italic">{dict.emptyMutationIn}</p>
+            ) : (
+              catSummaryMasuk.map((item, idx) => (
+                <div key={idx} className="space-y-1">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="font-semibold">{item.label}</span>
+                    <span className="font-mono text-emerald-400">{formatRupiah(item.value)} ({item.percentage}%)</span>
+                  </div>
+                  <div className="w-full h-1.5 theme-bg-tertiary rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${item.percentage}%` }} />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <h4 className="text-[10px] font-black uppercase tracking-wider theme-text-secondary font-mono pt-3 border-t theme-border">
             {dict.lastIncome}
-          </h5>
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+          </h4>
+          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
             {rincianMasuk.length === 0 ? (
-              <p className="text-xs theme-text-tertiary font-mono py-1">{dict.emptyMutationIn}</p>
+              <p className="text-[10px] theme-text-tertiary italic">{dict.emptyMutationIn}</p>
             ) : (
-              rincianMasuk.map((t, i) => (
-                <div key={i} className="p-2 theme-bg-tertiary theme-border border rounded-xl flex justify-between items-center text-xs">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-bold truncate uppercase theme-text-primary">{t.note}</p>
-                    <p className="text-[9px] theme-text-tertiary font-mono mt-0.5">{t.transaction_date}</p>
+              rincianMasuk.map((item, idx) => (
+                <div key={idx} className="flex justify-between items-center p-2 rounded-lg theme-bg-tertiary text-[10px]">
+                  <div className="min-w-0 pr-2">
+                    <p className="font-bold truncate">{item.note}</p>
+                    <p className="theme-text-tertiary text-[9px] font-mono">{item.transaction_date}</p>
                   </div>
-                  <p className={`font-mono font-black shrink-0 ml-2 text-xs ${t.amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                    {t.amount < 0 ? formatRupiah(t.amount) : `+${formatRupiah(t.amount)}`}
-                  </p>
+                  <span className="font-mono font-bold text-emerald-400 shrink-0">{formatRupiah(item.amount)}</span>
                 </div>
               ))
             )}
           </div>
         </GlassCard>
 
-        <GlassCard className="p-4 border-l-4 border-l-rose-400 space-y-3">
-          <h5 className="text-[10px] font-black text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 12H4"></path>
-            </svg>
-            {dict.lastExpense}
-          </h5>
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-            {rincianKeluar.length === 0 ? (
-              <p className="text-xs theme-text-tertiary font-mono py-1">{dict.emptyMutationOut}</p>
+        {/* PENGELUARAN */}
+        <GlassCard className="p-4 space-y-3">
+          <h3 className="text-[11px] font-black uppercase tracking-wider text-rose-500 font-mono flex items-center justify-between border-b theme-border pb-2">
+            <span>{dict.rekapExpense}</span>
+            <span className="text-[9px] theme-text-tertiary font-normal">({catSummaryKeluar.length})</span>
+          </h3>
+
+          <div className="space-y-2">
+            {catSummaryKeluar.length === 0 ? (
+              <p className="text-[10px] theme-text-tertiary italic">{dict.emptyMutationOut}</p>
             ) : (
-              rincianKeluar.map((t, i) => (
-                <div key={i} className="p-2 theme-bg-tertiary theme-border border rounded-xl flex justify-between items-center text-xs">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-bold truncate uppercase theme-text-primary">{t.note}</p>
-                    <p className="text-[9px] theme-text-tertiary font-mono mt-0.5">{t.transaction_date}</p>
+              catSummaryKeluar.map((item, idx) => (
+                <div key={idx} className="space-y-1">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="font-semibold">{item.label}</span>
+                    <span className="font-mono text-rose-400">{formatRupiah(item.value)} ({item.percentage}%)</span>
                   </div>
-                  <div className="font-mono font-black text-rose-400 shrink-0 ml-2 text-xs">-{formatRupiah(t.amount)}</div>
+                  <div className="w-full h-1.5 theme-bg-tertiary rounded-full overflow-hidden">
+                    <div className="h-full bg-rose-500 rounded-full" style={{ width: `${item.percentage}%` }} />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <h4 className="text-[10px] font-black uppercase tracking-wider theme-text-secondary font-mono pt-3 border-t theme-border">
+            {dict.lastExpense}
+          </h4>
+          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            {rincianKeluar.length === 0 ? (
+              <p className="text-[10px] theme-text-tertiary italic">{dict.emptyMutationOut}</p>
+            ) : (
+              rincianKeluar.map((item, idx) => (
+                <div key={idx} className="flex justify-between items-center p-2 rounded-lg theme-bg-tertiary text-[10px]">
+                  <div className="min-w-0 pr-2">
+                    <p className="font-bold truncate">{item.note}</p>
+                    <p className="theme-text-tertiary text-[9px] font-mono">{item.transaction_date}</p>
+                  </div>
+                  <span className="font-mono font-bold text-rose-400 shrink-0">{formatRupiah(item.amount)}</span>
                 </div>
               ))
             )}
           </div>
         </GlassCard>
+
       </div>
 
     </div>
